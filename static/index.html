@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تحسين جودة الفيديو بالذكاء الاصطناعي</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+
+<body>
+
+    <div class="glass-background"></div>
+
+    <div class="container">
+
+        <header>
+            <h1>محسن الفيديو الذكي</h1>
+            <p class="subtitle">حول فيديوهاتك المنخفضة الجودة إلى 4K باستخدام تقنية FlashVSR</p>
+        </header>
+
+        <main>
+            <div class="upload-area" id="drop-zone">
+                <div class="upload-content" id="upload-content">
+                    <div class="icon-wrapper">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                    </div>
+                    <h3>اسحب وأفلت الفيديو هنا</h3>
+                    <p>أو</p>
+                    <input type="file" id="file-input" accept="video/*" hidden>
+                    <button class="btn-primary" onclick="document.getElementById('file-input').click()">تصفح
+                        الملفات</button>
+                    <p class="file-info" id="file-name"></p>
+                </div>
+
+                <div class="loading-state hidden" id="loading-state">
+                    <div class="loader"></div>
+                    <h3>جاري المعالجة...</h3>
+                    <p id="status-text">يتم إرسال الفيديو إلى السيرفر...</p>
+                </div>
+
+                <div class="result-state hidden" id="result-state">
+                    <div class="icon-wrapper success">
+                        <i class="fa-solid fa-check"></i>
+                    </div>
+                    <h3>تمت المعالجة بنجاح!</h3>
+                    <div class="video-container">
+                        <video id="output-video" controls autoplay loop muted></video>
+                    </div>
+                    <div class="action-buttons">
+                        <a id="download-btn" href="#" download class="btn-primary">
+                            <i class="fa-solid fa-download"></i> تحميل الفيديو
+                        </a>
+                        <button class="btn-secondary" id="reset-btn">فيديو آخر</button>
+                    </div>
+                </div>
+                <div class="error-state hidden" id="error-state">
+                    <div class="icon-wrapper error">
+                        <i class="fa-solid fa-circle-exclamation"></i>
+                    </div>
+                    <h3>حدث خطأ ما</h3>
+                    <p id="error-text">يرجى المحاولة مرة أخرى.</p>
+                    <button class="btn-secondary" id="retry-btn">حاول مجدداً</button>
+                </div>
+
+                <!-- Debug Logs Section -->
+                <div class="logs-container" id="logs-container"
+                    style="margin-top: 20px; text-align: left; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; font-family: monospace; font-size: 0.8rem; color: #cbd5e1; max-height: 150px; overflow-y: auto; display: none;">
+                    <div style="border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 5px; font-weight: bold;">
+                        سجل النظام (System Logs):</div>
+                    <div id="logs-content"></div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>مدعوم بواسطة RunPod & FlashVSR</p>
+        </footer>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
