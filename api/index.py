@@ -48,30 +48,52 @@ HEADERS = {
 TIMEOUT_SETTINGS = httpx.Timeout(600.0, connect=60.0)
 
 @app.post("/api/upscale")
-async def upscale_video(file: UploadFile = File(...)):
-    print(f"Received file: {file.filename}")
+async def upscale_video(
+    file: UploadFile = File(...),
+    target_resolution: str = "1920x1080"
+):
+    print(f"Received file: {file.filename} | Target: {target_resolution}")
     
-    # 1. Read and Encode Video
+    # Parse resolution
+    try:
+        w, h = target_resolution.split("x")
+        target_width = int(w)
+        target_height = int(h)
+    except:
+        target_width, target_height = 1920, 1080
+
+    # 1. Read and Encode Video (Keep Base64 input for simplicty of RunPod Handler V1, 
+    # but optimally we should upload Input to R2 too. For now let's keep input as Base64 to not break too much)
     try:
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
             
-        # Warning: loading whole video into memory. Good for prototypes, bad for production.
         video_base64 = base64.b64encode(content).decode('utf-8')
         print(f"Video encoded to base64. Size: {len(video_base64) / 1024 / 1024:.2f} MB")
         
-        if len(video_base64) > 50 * 1024 * 1024:
-             print("Warning: File size > 50MB. RunPod might reject this payload.")
-
     except Exception as e:
         print(f"Error reading/encoding file: {e}")
         raise HTTPException(status_code=500, detail="Failed to process video file")
 
-    # 2. Send to RunPod
+    # 2. Prepare R2 Upload for OUTPUT
+    # We tell RunPod: "When you are done, PUT the file to this URL"
+    output_filename = f"upscaled_{int(time.time())}_{file.filename}"
+    output_object_key = f"outputs/{output_filename}"
+    
+    # Generate Presigned Upload URL for RunPod to use
+    presigned_upload_url = storage_manager.generate_presigned_upload_url(output_object_key)
+    if not presigned_upload_url:
+        print("Warning: Could not generate R2 Upload URL. RunPod logic might fail if relying on it.")
+        # We continue, but RunPod might fallback to base64 if handler handles it.
+
+    # 3. Send to RunPod
     payload = {
         "input": {
-            "video": video_base64
+            "video": video_base64,
+            "target_width": target_width,
+            "target_height": target_height,
+            "output_upload_url": presigned_upload_url # This is the key for updated_handler.py
         }
     }
     
@@ -82,13 +104,15 @@ async def upscale_video(file: UploadFile = File(...)):
             
             if response.status_code != 200:
                 print(f"RunPod Error Status: {response.status_code}")
-                print(f"RunPod Error Body: {response.text}")
+                # Check for 401 specifically
+                if response.status_code == 401:
+                    raise HTTPException(status_code=401, detail="RunPod Authentication Failed. Check API Key.")
+                
                 raise HTTPException(status_code=502, detail=f"RunPod Error ({response.status_code}): {response.text[:200]}")
             
             try:
                 data = response.json()
             except ValueError:
-                 print(f"RunPod Non-JSON Response: {response.text}")
                  raise HTTPException(status_code=502, detail=f"RunPod returned invalid JSON: {response.text[:200]}")
 
             request_id = data.get("id")
@@ -98,9 +122,8 @@ async def upscale_video(file: UploadFile = File(...)):
             print(f"RunPod Connection Error: {e}")
             raise HTTPException(status_code=502, detail=f"RunPod Connection Error: {str(e)}")
 
-        # 3. Poll for Status
+        # 4. Poll for Status
         status = "IN_PROGRESS"
-        output_data = None
         
         while status in ["IN_PROGRESS", "IN_QUEUE"]:
             await asyncio.sleep(2)  # Non-blocking sleep
@@ -112,7 +135,40 @@ async def upscale_video(file: UploadFile = File(...)):
                 print(f"Polling Status: {status}")
                 
                 if status == "COMPLETED":
-                    output_data = status_data.get("output")
+                    # Smart Logic:
+                    # If we sent an output_upload_url, RunPod should have used it.
+                    # RunPod response `output` might be a message like "Output uploaded..." 
+                    # OR if the user didn't update the handler yet, it might doubtless contain the base64.
+                    
+                    output_data = status_data.get("output", {})
+                    
+                    # Check if R2 integration worked
+                    # If we generated a URL, and status is success, we trust it or check metadata
+                    
+                    # Generate a VIEW URL (Download URL) from R2
+                    if presigned_upload_url:
+                        # Assuming success upload
+                        view_url = storage_manager.generate_presigned_download_url(output_object_key)
+                        if view_url:
+                            print(f"Generated R2 View URL: {view_url[:50]}...")
+                            return JSONResponse({"url": view_url, "type": "r2_url"})
+                    
+                    # Fallback: Handle Base64 if Handler didn't use R2
+                    bg_video_str = None
+                    if isinstance(output_data, dict):
+                        bg_video_str = output_data.get("video") or output_data.get("output_video")
+                    elif isinstance(output_data, str):
+                        bg_video_str = output_data
+
+                    if bg_video_str and len(str(bg_video_str)) > 100:
+                         final_data_uri = f"data:video/mp4;base64,{bg_video_str}"
+                         return JSONResponse({"url": final_data_uri, "type": "data_uri"})
+                    
+                    # If we are here, we expected R2 upload but maybe verified details are missing?
+                    # If view_url was generated, we returned it above.
+                    
+                    return JSONResponse({"output": output_data, "type": "raw"})
+
                 elif status == "FAILED":
                     error_msg = status_data.get("error", "Unknown error")
                     print(f"RunPod Task Failed: {error_msg}")
@@ -122,52 +178,8 @@ async def upscale_video(file: UploadFile = File(...)):
                 print(f"Polling Error: {e}")
                 # Retry logic could be added here
                 raise HTTPException(status_code=502, detail="Error polling RunPod status")
-
-    # 4. Process Output
-    if not output_data:
-        raise HTTPException(status_code=500, detail="No output received from RunPod")
-        
-    bg_video_str = None
-    if isinstance(output_data, str):
-        bg_video_str = output_data
-    elif isinstance(output_data, dict):
-        bg_video_str = output_data.get("video") or output_data.get("output_video") or output_data.get("base64")
-        if not bg_video_str:
-             # Maybe it returns a url?
-             url_video = output_data.get("url")
-             if url_video:
-                 return JSONResponse({"url": url_video, "type": "url"})
-        
-    if bg_video_str and len(str(bg_video_str)) > 100:
-        try:
-            # Use /tmp for serverless environment
-            output_filename = f"upscaled_{file.filename}"
-            output_path = os.path.join("/tmp", output_filename)
-             
-            if "," in bg_video_str[:50]:
-                bg_video_str = bg_video_str.split(",")[1]
-                
-            video_bytes = base64.b64decode(bg_video_str)
-            async with aiofiles.open(output_path, 'wb') as out_file:
-                await out_file.write(video_bytes)
-            
-            # For Vercel, we can't serve from /tmp easily unless we stream it back.
-            # Ideally we upload to S3. But for this demo, let's return the base64/data URI directly if possible?
-            # Or just return the raw bytes?
-            # Easier: Return the data URI so frontend plays it directly without fetching a file.
-            
-            final_data_uri = f"data:video/mp4;base64,{bg_video_str}"
-            print(f"Returning Data URI (Length: {len(final_data_uri)})")
-            
-            return JSONResponse({"url": final_data_uri, "type": "data_uri"})
-
-        except Exception as e:
-            print(f"Error saving output video: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save upscaled video")
-            
-    else:
-        print(f"Output data handling fallback: {output_data}")
-        return JSONResponse({"output": output_data, "type": "raw"})
+    
+    return HTTPException(status_code=500, detail="Unknown error flow")
 
 @app.get("/api/upload-url")
 def get_upload_url(filename: str, content_type: str = "video/mp4"):
