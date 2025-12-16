@@ -22,9 +22,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files (frontend)
-os.makedirs("static", exist_ok=True)
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Vercel handles static files from /public automatically. No need to mount.
+# But for local dev we might miss it. However, the priority is Vercel fix.
 
 RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY")
 RUNPOD_ENDPOINT_ID = "hgn3kb2km6tnxi"
@@ -132,20 +131,26 @@ async def upscale_video(file: UploadFile = File(...)):
         
     if bg_video_str and len(str(bg_video_str)) > 100:
         try:
+            # Use /tmp for serverless environment
             output_filename = f"upscaled_{file.filename}"
-            output_path = os.path.join("static", output_filename)
-            
+            output_path = os.path.join("/tmp", output_filename)
+             
             if "," in bg_video_str[:50]:
                 bg_video_str = bg_video_str.split(",")[1]
                 
             video_bytes = base64.b64decode(bg_video_str)
             async with aiofiles.open(output_path, 'wb') as out_file:
                 await out_file.write(video_bytes)
-                
-            final_url = f"/{output_filename}"
-            print(f"Saved output to {output_path}")
             
-            return JSONResponse({"url": final_url, "type": "local"})
+            # For Vercel, we can't serve from /tmp easily unless we stream it back.
+            # Ideally we upload to S3. But for this demo, let's return the base64/data URI directly if possible?
+            # Or just return the raw bytes?
+            # Easier: Return the data URI so frontend plays it directly without fetching a file.
+            
+            final_data_uri = f"data:video/mp4;base64,{bg_video_str}"
+            print(f"Returning Data URI (Length: {len(final_data_uri)})")
+            
+            return JSONResponse({"url": final_data_uri, "type": "data_uri"})
 
         except Exception as e:
             print(f"Error saving output video: {e}")
