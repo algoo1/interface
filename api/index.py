@@ -230,5 +230,17 @@ def debug_env():
         "r2_url_value": r2_url
     }
 
+# Mount static files for local development (must be last to avoid overriding API routes)
+# This allows running 'python api/index.py' and accessing the frontend at http://localhost:8000
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Assumes api/index.py is in 'api/' and 'public/' is a sibling
+public_dir = os.path.join(os.path.dirname(current_dir), "public")
+
+if os.path.exists(public_dir):
+    print(f"Mounting public directory: {public_dir}")
+    app.mount("/", StaticFiles(directory=public_dir, html=True), name="static")
+else:
+    print(f"Warning: Public directory not found at {public_dir}. Frontend will not be served.")
+
 if __name__ == "__main__":
-    uvicorn.run("api.index:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
